@@ -1,0 +1,68 @@
+---
+- name: Fail if username_to_create is not set
+  fail: msg="username_to_create must be set"
+  connection: local
+  when: username_to_create is not defined
+
+- name: Fail if user_public_key_name is not set_fact
+  fail: msg="user_public_key_name must be set and must be name of ssh key in home .ssh directory"
+  connection: local
+  when: user_public_key_name is not defined
+
+- name: Set userhome_to_create
+  set_fact: userhome_to_create=/home/{{username_to_create}}
+  connection: local
+
+- name: Set public key source
+  set_fact: user_public_key_src="{{lookup('env','HOME')}}/.ssh/{{user_public_key_name}}"
+
+- name: Make sure user is created
+  user: name={{username_to_create}} state=present home={{userhome_to_create}} shell=/bin/bash comment="Ansible generated user {{username_to_create}}" generate_ssh_key=yes
+  sudo: yes
+  sudo_user: root
+
+- name: Set user password to something random
+  script: set_random_password.sh
+  run_once: yes
+  sudo: yes
+
+- name: Add local copy of user public key to authorized_keys file for user
+  command: /bin/cat {{user_public_key_src}}
+  register: console
+  connection: local
+- set_fact: user_pub_key="{{ console.stdout }}"
+- debug: var=user_pub_key
+- authorized_key: user={{username_to_create}}
+                  key="{{user_pub_key}}"
+                  path="{{userhome_to_create}}/.ssh/authorized_keys"
+  sudo: yes
+
+
+- name: Get local public key and send to console
+  command: /bin/cat  {{userhome_to_create}}/.ssh/id_rsa.pub
+  sudo: yes
+  register: console
+
+- name: Add copy of local public key to authorized_keys file for user
+  authorized_key: user={{username_to_create}}
+                  key="{{console.stdout}}"
+                  path="{{userhome_to_create}}/.ssh/authorized_keys"
+  sudo: yes
+
+- name: Create user sudo file
+  lineinfile: dest=/etc/sudoers.d/{{username_to_create}} line="{{username_to_create}} ALL=(ALL) NOPASSWD:ALL" state=present create=yes
+  sudo: yes
+
+- name: Disable ssh login with password
+  lineinfile: dest=/etc/ssh/sshd_config insertafter="{{item.insertafter}}" line="{{item.line}}"
+  with_items:
+  - { insertafter: EOF, line: "Match User {{username_to_create}}" }
+  - { insertafter: "Match User {{username_to_create}}", line: "    PasswordAuthentication no" }
+  register: disable_password_based_ssh_access
+  sudo: yes
+
+- name: Restart ssh if neccessary after disabling root access to ssh
+  service: name=ssh state=restarted
+  sudo: yes
+  when: disable_password_based_ssh_access|changed  
+
