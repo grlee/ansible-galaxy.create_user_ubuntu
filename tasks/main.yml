@@ -18,40 +18,42 @@
 
 - name: Make sure user is created
   user: name={{username_to_create}} state=present home={{userhome_to_create}} shell=/bin/bash comment="Ansible generated user {{username_to_create}}" generate_ssh_key=yes
-  sudo: yes
-  sudo_user: root
+  run_once: yes
+  become: yes
 
 - name: Set user password to something random
   script: set_random_password.sh
   run_once: yes
-  sudo: yes
+  become: yes
 
 - name: Add local copy of user public key to authorized_keys file for user
   command: /bin/cat {{user_public_key_src}}
   register: console
   connection: local
+
 - set_fact: user_pub_key="{{ console.stdout }}"
+
 - debug: var=user_pub_key
+
 - authorized_key: user={{username_to_create}}
                   key="{{user_pub_key}}"
                   path="{{userhome_to_create}}/.ssh/authorized_keys"
-  sudo: yes
-
+  become: yes
 
 - name: Get local public key and send to console
   command: /bin/cat  {{userhome_to_create}}/.ssh/id_rsa.pub
-  sudo: yes
+  become: yes
   register: console
 
 - name: Add copy of local public key to authorized_keys file for user
   authorized_key: user={{username_to_create}}
                   key="{{console.stdout}}"
                   path="{{userhome_to_create}}/.ssh/authorized_keys"
-  sudo: yes
+  become: yes
 
 - name: Create user sudo file
   lineinfile: dest=/etc/sudoers.d/{{username_to_create}} line="{{username_to_create}} ALL=(ALL) NOPASSWD:ALL" state=present create=yes
-  sudo: yes
+  become: yes
 
 - name: Disable ssh login with password
   lineinfile: dest=/etc/ssh/sshd_config insertafter="{{item.insertafter}}" line="{{item.line}}"
@@ -59,10 +61,9 @@
   - { insertafter: EOF, line: "Match User {{username_to_create}}" }
   - { insertafter: "Match User {{username_to_create}}", line: "    PasswordAuthentication no" }
   register: disable_password_based_ssh_access
-  sudo: yes
+  become: yes
 
 - name: Restart ssh if neccessary after disabling root access to ssh
   service: name=ssh state=restarted
-  sudo: yes
-  when: disable_password_based_ssh_access|changed  
-
+  become: yes
+  when: disable_password_based_ssh_access|changed
